@@ -48,7 +48,7 @@ library(Matching)
 
 In this document, we discuss the implementation of Bayesian model-based inference for causal effects in **Stan**. The Bayesian inferential framework introduced by @rubin1978bayesian defines causal effects as a comparison of the potential outcomes of the same units and clearly separates the true underlying model of the potential outcomes from the treatment assignment mechanism. Then the framework takes advantage of fully Bayesian posterior predictive inference for multiply-imputing the missing potential outcomes. 
 
-We start by providing an introduction to the Bayesian inferential framework by analyzing a simulated dataset generated under unconfounded treatment assignment. Then we analyze an example dataset obtained from a completely randomized experiment focusing on the specification of the joint distribution of the potential outcomes. All of the source code for this case study is available on GitHub at [joonho112/Bayesian-causal-inference/Case_study_1](https://github.com/stan-dev/example-models/tree/master/knitr/lotka-volterra).      
+We start by providing an introduction to the Bayesian inferential framework by analyzing a simulated dataset generated under unconfounded treatment assignment. Then we analyze an example dataset obtained from a completely randomized experiment focusing on the specification of the joint distribution of the potential outcomes. All of the source code for this case study is available on GitHub at [joonho112/Bayesian-causal-inference/Case_study_1](https://github.com/joonho112/Bayesian-causal-inference/tree/master/Case_study_1).      
 
 
 
@@ -163,15 +163,15 @@ $$
 
 The joint posterior distribution of the missing data and the parameter factors into the two terms in the second integral. The first term is the sampling distribution for the replicated missing potential outcomes given parameters, treatment assignment, and observed potential coutcomes, which encapsulates the uncertainty in the imputation. The second term represents the posterior distribution of the model parameters $\theta$. This term captures the uncertainty due to parameter estimation given the observations. The integral incorporates the two forms of uncertainty into the model by taking a weighted average of the sampling distribution with weights given by the posterior of $\theta$.
 
-The first term is inherently a function of the two underlying primitives, the assignment mechanism and the science. Given unconfounded treatment assignment, however, the assignment mechanism is *ignorable* in the imputation process. This means that causal inference under unconfoundedness requires only a model of the science but depends crucially on the joint distribution of $Y_{i}(0)$ and $Y_{i}(1)$. The model-based approach for completely randomized experiments thus starts from modeling the science to ultimately derive the posterior predictive distribution of the $Y_{i}^{mis}$.  
+The first term is inherently a function of the two underlying primitives, the assignment mechanism and the science (See @ding2017causal pp 18-19). Given unconfounded treatment assignment, however, the assignment mechanism is *ignorable* in the imputation process. This means that causal inference under unconfoundedness requires only a model of the science but depends crucially on the joint distribution of $Y_{i}(0)$ and $Y_{i}(1)$. The model-based approach for completely randomized experiments thus starts from modeling the science to ultimately derive the posterior predictive distribution of the $Y_{i}^{mis}$.  
 
 The **Stan** program to obtain the posterior predictive distribution of the missing potential outcomes from the simulated data is provided and explained in section 2.3.2. We illustrate the following program based on how to code the two forms of uncertainty in **Stan**. 
 
 ```
 data {
   int<lower=0> N;                   // sample size
-  real y[N];                        // observed outcome
-  int<lower=0,upper=1> w[N];        // treatment assigned
+  vector[N] y;                      // observed outcome
+  vector[N] w;                      // treatment assigned
   real<lower=0,upper=1> rho;        // assumed correlation between the potential outcomes
 }
 parameters {
@@ -188,8 +188,7 @@ model {
    sigma_t ~ cauchy(0, 5);
 
    // LIKELIHOOD
-   for(n in 1:N) 
-       y[n] ~ normal(alpha + tau * w[n], sigma_t*w[n] + sigma_c*(1 - w[n]));
+   y ~ normal(alpha + tau*w, sigma_t*w + sigma_c*(1 - w));
 }
 generated quantities{
   real tau_fs;                      // finite-sample average treatment effect  
@@ -210,6 +209,7 @@ generated quantities{
   }
   tau_fs = mean(tau_unit);        
 }
+
 ```
 The model specified in the **Stan** program is fit to the simulated data:
 
@@ -219,7 +219,7 @@ stan_data <- list(N = N, y = Y_obs, w = W, rho = 0.0,
                   ii_t = ii_t, ii_c = ii_c, N_t = N_t, N_c = N - N_t)
 
 # Compile and run the stan model
-fit_simdat <- stan(file = "code/simulated_example.stan",
+fit_simdat <- stan(file = "simulated_example.stan",
                    data = stan_data,
                    iter = 1000, chains = 4)
 ```
@@ -237,11 +237,10 @@ $$
 \mathrm{Pr}(Y_{i}^{obs} \vert \mathrm{W}, \theta) \sim \mathsf{Normal}(W_{i} \cdot \mu_{t} + (1 - W_{i}) \cdot \mu_{c} , W_{i} \sigma_{t}^{2} + (1 - W_{i}) \cdot \sigma_{c}^{2})
 $$ 
 
-where $\mu_{c}$ and $\mu_{t}$ are $\alpha$ and $\alpha + \tau$ respectively. Because we can observe only one potential outcome per person, the likelihood function $\mathrm{Pr}(\mathrm{Y}^{obs}, \mathrm{W} \vert \theta)$ remains the same irrespective of the value of $\rho$. The sampling statement of $Y_{i}^{obs}$ is coded as:
+where $\mu_{c}$ and $\mu_{t}$ are $\alpha$ and $\alpha + \tau$ respectively. Because we can observe only one potential outcome per person, the likelihood function $\mathrm{Pr}(\mathrm{Y}^{obs}, \mathrm{W} \vert \theta)$ remains the same irrespective of the value of $\rho$. The sampling statement of $\mathrm{Y}^{obs}$ is coded as:
 
 ```
-   for(n in 1:N) 
-       y[n] ~ normal(alpha + tau * w[n], sigma_t*w[n] + sigma_c*(1 - w[n]));
+   y ~ normal(alpha + tau*w, sigma_t*w + sigma_c*(1 - w));
 ```
 
 The posterior means and standard deviations of the parameters, $\alpha$, $\tau$, $\sigma_{c}$, and $\sigma_{t}$, can be displayed as follows:
@@ -381,7 +380,8 @@ mcmc_areas(posterior, pars = c("tau_fs", "tau"),
 
 # Example application
 
-Because observed data generally do not include empirical information about the dependence between potential outcomes, the key difficulty of the model-based inference lies in how the dependence should be modeled. Researchers often vary the specification of the model of the joint distribution of $Y_{i}(1)$ and $Y_{i}(0)$ and look at the sensitivity of conclusions to the choice for the model. Focusing on this aspect of the model-based approach, we analyze an example data obtained from a completely randomized experiment in this section.    
+Because observed data generally do not include empirical information about the dependence between potential outcomes, the key difficulty of the model-based inference lies in how the dependence should be modeled. Researchers often vary the specification of the model of the joint distribution of $Y_{i}(1)$ and $Y_{i}(0)$ and look at the sensitivity of conclusions to the choice for the model. Focusing on this aspect of the model-based approach, we analyze an example data obtained from a completely randomized experiment in this section. We specifically aim to replicate the analysis performed in chapter 8 of @imbens2015causal for the illustration. 
+
 
 ## Data example: The NSW experimental job-training data 
 
@@ -425,7 +425,7 @@ sumstats <- lalonde %>%
 knitr::kable(sumstats, caption = "Summary statistics for the NSW data")
 ```
 
-Among the sample of $N = 445$, 42% of participants were randomly assigned to the job training program ($N_{t} = 185$). Because we aim to replicate @imbens2015causal's analyses for the illustration, all earning variables, `re74`, `re75`, and `re78`, were converted to thousands by deviding them by 1,000. Alternatively, one may want to standardize continuous covariates `age` and log-transform all earnings variables to improve MCMC sampling.  
+Among the sample of $N = 445$, 42% of participants were randomly assigned to the job training program ($N_{t} = 185$). To replicate @imbens2015causal's analyses, all earning variables, `re74`, `re75`, and `re78`, were converted to thousands by deviding them by 1,000. Alternatively, one may want to standardize continuous covariates `age` and log-transform all earnings variables to improve MCMC sampling.  
 
 
 ## Analyzing the example data with **Stan**
@@ -468,8 +468,8 @@ functions {
 }
 data {
   int<lower=0> N;                   // sample size
-  real y[N];                        // observed outcome
-  int<lower=0,upper=1> w[N];        // treatment assigned
+  vector[N] y;                      // observed outcome
+  vector[N] w;                      // treatment assigned
 }
 parameters {
   real alpha;                       // intercept
@@ -485,8 +485,7 @@ model {
    sigma_t ~ inv_gamma(1, 0.01);
 
    // LIKELIHOOD
-   for(n in 1:N) 
-       y[n] ~ normal(alpha + tau * w[n], sigma_t*w[n] + sigma_c*(1 - w[n]));
+   y ~ normal(alpha + tau*w, sigma_t*w + sigma_c*(1 - w));
 }
 generated quantities{
   real tau_fs;                      // finite-sample average treatment effect
@@ -527,7 +526,7 @@ The **Stan** program assumming independence between the potential outcomes is th
 stan_data <- list(N = nrow(lalonde), y = y, w = w)
 
 # Compile and run the stan model
-fit_mod1 <- stan(file = "code/Model_01_Assuming_Independent_Potential_Outcomes.stan",
+fit_mod1 <- stan(file = "Model_01_Assuming_Independent_Potential_Outcomes.stan",
                  data = stan_data,
                  iter = 1000, chains = 4)
 ```
@@ -541,7 +540,10 @@ print(fit_mod1, pars = param,
       probs = c(0.1, 0.5, 0.9), digits = 3)
 ```
 
-```{r, fig.height=4, fig.width=8}
+The posterior means and standard deviations for treatment effects above are the same as the estimates in the second line of Table 8.6 of @imbens2015causal with small differences.
+
+
+```{r, fig.height=5, fig.width=8}
 posterior <- as.array(fit_mod1)
 color_scheme_set("purple")
 mcmc_areas(posterior, pars = c("tau", "tau_fs", "tau_qte25", "tau_qte50", "tau_qte75"), 
@@ -552,7 +554,7 @@ mcmc_areas(posterior, pars = c("tau", "tau_fs", "tau_qte25", "tau_qte50", "tau_q
 ```
 
 
-Again we observe that the posterior standard deviation of the finite-sample ATE (`tau_fs`), 0.48, is substantially lower than that of the super-population ATE (`tau`), 0.66. Cosidering the high proportion of zeros in the outcome `re78` (about 31%), it is not surprising that the posterior distribution of `tau_qte25` seems to be non-normal. For the readers who attempt to model the zero-inflated distribution of the potential outcomes, the **Stan** program for the two-part model is available on the GitHub repository.     
+Again we observe that the posterior standard deviation of the finite-sample ATE (`tau_fs`), 0.48, is substantially lower than that of the super-population ATE (`tau`), 0.66. Cosidering the high proportion of zeros in the outcome `re78` (about 31%), it is not surprising that the posterior distribution of `tau_qte25` seems to be non-normal. For the readers who attempt to model the zero-inflated distribution of the potential outcomes, the **Stan** program for the two-part model is available on [the GitHub repository](https://github.com/joonho112/Bayesian-causal-inference/tree/master/Case_study_1).     
 
 The three QTE estimates shed some light on the treatment effect heterogeneity across the outcome distribution. From the figure above we observe that the effect of the job-training program becomes stronger for the higher conditional quantiles, indicating that the program is most benefical for the participants at the high end of the earning distribution (75%). However, these results for the QTE estimands might be sensitive to choices for the prior distribution of the dependence structure between the two potential outcomes [@imbens2015causal].   
 
@@ -576,7 +578,7 @@ $$
 
 where $\mu_{c}$ and $\mu_{t}$ are $\alpha$ and $\alpha + \tau$ respectively. 
 
-The **Stan** program **Model_02_Assuming_Constant_Treatment_Effects.stan** for the model 2 is the same as the program for the model 1, with only a few differences. First, due to the assumption of equal variances (`sigma_t` = `sigma_c`), the sampling statment of $Y_{i}^{obs}$ is now coded as `y[n] ~ normal(alpha + tau * w[n], sigma);` with the pooled residual standard deviation `sigma`.
+The **Stan** program **Model_02_Assuming_Constant_Treatment_Effects.stan** for the model 2 is the same as the program for the model 1, with only a few differences. First, due to the assumption of equal variances (`sigma_t` = `sigma_c`), the sampling statment of $\mathrm{Y}^{obs}$ is now coded as `y ~ normal(alpha + tau*w, sigma);` with the pooled residual standard deviation `sigma`.
 
 Second, assuming a correlation coefficient between $Y_{i}(1)$ and $Y_{i}(0)$ equal to 1, the conditional distribution of one potential outcome given the other now has zero variance ($\sigma_{t}^{2}(1-\rho^{2}) = \sigma_{c}^{2}(1-\rho^{2}) = 0$). Hence the **Stan** code for the model-based imputation becomes `y0[n] = mu_c + (y[n] - mu_t);` for $Y_{i}(0)$ and `y1[n] = mu_t + (y[n] - mu_c);` for $Y_{i}(1)$. 
 
@@ -586,7 +588,7 @@ The **Stan** program for the Model 2 is fit to the example data:
 
 ```{r, results="hide", cache=TRUE, warning=FALSE, message=FALSE}
 # Compile and run the stan model
-fit_mod2 <- stan(file = "code/Model_02_Assuming_Constant_Treatment_Effects.stan",
+fit_mod2 <- stan(file = "Model_02_Assuming_Constant_Treatment_Effects.stan",
                  data = stan_data,
                  iter = 1000, chains = 4)
 ```
@@ -659,25 +661,24 @@ stan_data <- list(y = y, w = w, x = x_c_mat, xw_inter = xw_inter, N = nrow(lalon
 ```
 
 
-In the **Stan** program **Model_03_Independent_Potential_Outcomes_With_Covariates.stan** for the Model 3, the data variables are coded following their specifications in the data list. In addition to the `alpha`, `tau`, `sigma_c`, and `sigma_t`, we specify two row vectors for the slope coefficients in the `parameters` block: `beta` for $\beta_{c}$ and `beta_inter` for $\beta_{t} - \beta_{c}$. The priors for the slope coefficients are specified to be normal with zero means and variance equal to $100^{2}$. The sampling statement of $Y_{i}^{obs}$ is then coded as
+In the **Stan** program **Model_03_Independent_Potential_Outcomes_With_Covariates.stan** for the Model 3, the data variables are coded following their specifications in the data list. In addition to the `alpha`, `tau`, `sigma_c`, and `sigma_t`, we specify two vectors for the slope coefficients in the `parameters` block: `beta` for $\beta_{c}$ and `beta_inter` for $\beta_{t} - \beta_{c}$. The priors for the slope coefficients are specified to be normal with zero means and variance equal to $100^{2}$. The sampling statement of $\mathrm{Y}^{obs}$ is then coded using matrix notation as
 
 ```
-  for(n in 1:N) 
-      y[n] ~ normal(alpha + beta * x[n] + beta_inter * xw_inter[n] + tau * w[n], sigma_t*w[n] + sigma_c*(1-w[n]));
+    y ~ normal(alpha + x*beta + xw_inter*beta_inter + tau * w, sigma_t*w + sigma_c*(1-w));
 ```
 
 Assuming zero correlation between $Y_{i}(0)$ and $Y_{i}(1)$, the code for the model-based imputation is the same as the code for Model 1: `y0[n] = normal_rng(mu_c, sigma_c);` for $Y_{i}(0)$ and `y1[n] = normal_rng(mu_t, sigma_t);` for $Y_{i}(1)$. Because the covariates determines the location of the distribution but not its scale in Model 3, only the `mu_c` and `mu_t` are changed from the program for Model 1 as      
 
 ```
-  real mu_t = alpha + beta*x[n] + beta_inter*x[n] + tau;
-  real mu_c = alpha + beta*x[n];
+    real mu_t = alpha + x[n,]*beta + x[n, ]*beta_inter + tau;
+    real mu_c = alpha + x[n,]*beta;
 ```
 
 The **Stan** program for the Model 3 is fit to the example data:
 
 ```{r, results="hide", cache=TRUE, warning=FALSE, message=FALSE}
 # Compile and run the stan model
-fit_mod3 <- stan(file = "code/Model_03_Independent_Potential_Outcomes_With_Covariates.stan",
+fit_mod3 <- stan(file = "Model_03_Independent_Potential_Outcomes_With_Covariates.stan",
                  data = stan_data,
                  iter = 1000, chains = 4)
 ```
