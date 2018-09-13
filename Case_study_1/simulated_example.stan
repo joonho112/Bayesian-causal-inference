@@ -2,20 +2,20 @@ data {
   int<lower=0> N;                   // sample size
   vector[N] y;                      // observed outcome
   vector[N] w;                      // treatment assigned
-  real<lower=0,upper=1> rho;        // assumed correlation between the potential outcomes
+  real<lower=-1,upper=1> rho;        // assumed correlation between the potential outcomes
 }
 parameters {
   real alpha;                       // intercept
   real tau;                         // super-population average treatment effect
-  real<lower=0, upper=10> sigma_c;  // residual SD for the control
-  real<lower=0, upper=10> sigma_t;  // residual SD for the treated
+  real<lower=0> sigma_c;            // residual SD for the control
+  real<lower=0> sigma_t;            // residual SD for the treated
 }
 model {
    // PRIORS
    alpha ~ normal(0, 5);            
    tau ~ normal(0, 5);
-   sigma_c ~ cauchy(0, 5);          
-   sigma_t ~ cauchy(0, 5);
+   sigma_c ~ normal(0, 5);          
+   sigma_t ~ normal(0, 5);
 
    // LIKELIHOOD
    y ~ normal(alpha + tau*w, sigma_t*w + sigma_c*(1 - w));

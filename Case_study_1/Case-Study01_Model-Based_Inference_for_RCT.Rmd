@@ -134,7 +134,7 @@ Given the science that exists independently of the study design, the assignment 
 
 ```{r, echo=FALSE}
 # Add parentheses to the unobserved values
-df <- round(data.frame(W, Y0, Y1, tau_unit), 2)
+df <- format(round(data.frame(W, Y0, Y1, tau_unit), 1), nsmall = 1)
 df$Y0[W == 1] <- paste0("(", df$Y0[W == 1], ")")
 df$Y1[W == 0] <- paste0("(", df$Y1[W == 0], ")")
 df$tau_unit <- paste0("(", df$tau_unit, ")")
@@ -172,20 +172,20 @@ data {
   int<lower=0> N;                   // sample size
   vector[N] y;                      // observed outcome
   vector[N] w;                      // treatment assigned
-  real<lower=0,upper=1> rho;        // assumed correlation between the potential outcomes
+  real<lower=-1,upper=1> rho;        // assumed correlation between the potential outcomes
 }
 parameters {
   real alpha;                       // intercept
   real tau;                         // super-population average treatment effect
-  real<lower=0, upper=10> sigma_c;  // residual SD for the control
-  real<lower=0, upper=10> sigma_t;  // residual SD for the treated
+  real<lower=0> sigma_c;            // residual SD for the control
+  real<lower=0> sigma_t;            // residual SD for the treated
 }
 model {
    // PRIORS
    alpha ~ normal(0, 5);            
    tau ~ normal(0, 5);
-   sigma_c ~ cauchy(0, 5);          
-   sigma_t ~ cauchy(0, 5);
+   sigma_c ~ normal(0, 5);          
+   sigma_t ~ normal(0, 5);
 
    // LIKELIHOOD
    y ~ normal(alpha + tau*w, sigma_t*w + sigma_c*(1 - w));
@@ -215,8 +215,7 @@ The model specified in the **Stan** program is fit to the simulated data:
 
 ```{r, results="hide", cache=TRUE}
 # Collect data into a list format suitable for Stan
-stan_data <- list(N = N, y = Y_obs, w = W, rho = 0.0, 
-                  ii_t = ii_t, ii_c = ii_c, N_t = N_t, N_c = N - N_t)
+stan_data <- list(N = N, y = Y_obs, w = W, rho = 0.0)
 
 # Compile and run the stan model
 fit_simdat <- stan(file = "simulated_example.stan",
@@ -376,6 +375,7 @@ mcmc_areas(posterior, pars = c("tau_fs", "tau"),
                 subtitle = "with means, 80% intervals, and the true value (red dashed)")
 ```
 
+For more detailed discussion on Bayesian inference for super-population and finite-population estimands, see the section 8.4 of @gelman2013bayesian. 
 
 
 # Example application
@@ -421,7 +421,7 @@ sumstats <- lalonde %>%
   separate(key, into = c("variable", "stat"), sep = "_") %>%
   spread(stat, value) %>%
   dplyr::select(variable, mean, sd, min, max) %>%
-  mutate_each(funs(round(., 2)), -variable)
+  mutate_each(funs(round(., 1)), -variable)
 knitr::kable(sumstats, caption = "Summary statistics for the NSW data")
 ```
 
@@ -474,15 +474,15 @@ data {
 parameters {
   real alpha;                       // intercept
   real tau;                         // super-population average treatment effect
-  real<lower=0, upper=10> sigma_c;  // residual SD for the control
-  real<lower=0, upper=10> sigma_t;  // residual SD for the treated
+  real<lower=0> sigma_c;            // residual SD for the control
+  real<lower=0> sigma_t;            // residual SD for the treated
 }
 model {
    // PRIORS
    alpha ~ normal(0, 100);            
    tau ~ normal(0, 100);
-   sigma_c ~ inv_gamma(1, 0.01);          
-   sigma_t ~ inv_gamma(1, 0.01);
+   sigma_c ~ normal(0, 100);          
+   sigma_t ~ normal(0, 100);
 
    // LIKELIHOOD
    y ~ normal(alpha + tau*w, sigma_t*w + sigma_c*(1 - w));
@@ -517,7 +517,11 @@ generated quantities{
 The program is basically the same as the one for the simulated data, but has two notable differences. First, we define three additional finite-sample causal estimands based on quantiles in addition to the average treatment effect (`tau_fs`), that is, quantile treatment effects (QTE) for the 0.25, 0.50, and 0.75 quantiles (`tau_qte25`, `tau_qte50`, `tau_qte75`). The QTEs are defined as the differences in the $p$th quantiles of the potential outcomes, $Q_{p}(Y_{i}(1)) - Q_{p}(Y_{i}(0))$, not the $p$th quantiles of the differences in the potential outcomes, $Q_{p}(Y_{i}(1) - Y_{i}(0))$. The posterior distribution of the QTEs can be easily derived given the imputed missing potential outcomes in the same manner as for the finite-sample average treatement effect. Unfortunately, a built-in function to calculate the sample quantile values for data and generated quantities is not yet available in **Stan**. Thus we need to add a `functions` block for a user-defined function equivalent to `quantile()` in **R**. In the `functions` block, all sample quantiles were defined as a weighted average of consecutive order statistics. See @hyndman1996sample for further details. 
 
 
-Second, the scales of the prior distributions for the two mean parameters are now set to 100 because the standard deviation of 100 is large relative to the scale of the earning variables measured in throusands of dollars which range from 0 to 60.31. The prior distributions for $\sigma_{c}$ and $\sigma_{t}$ are inverse gamma distributions with the shape parameters $\alpha$ set to 1 and with the scale parameters $\beta$ set to 0.01. Despite the availability of other options for prior distributions for the scale parameters such as half-cauchy, exponential, or half-normal distributions, we chose the inverse-gamma distributions to replicate the @imbens2015causal analyses. Using inverse-gamma priors is reasonable for the scale parameter of a single-level normal model with enough data. See @gelman2006prior and a Wiki on [prior choice recommentations](https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations) by the Stan Development Team. 
+Second, the scales of the prior distributions for the two mean parameters are now set to 100 because the standard deviation of 100 is large relative to the scale of the earning variables measured in throusands of dollars which range from 0 to 60.31. We use unscaled normal priors `normal(0, 100)` for the `alpha` and `tau` for pedagogical purposes - we want to replicate the estimates in Table 8.6 of @imbens2015causal. In practice, it is better idea to put the `alpha` and `tau` on a unit scale by dividing them by the scale such as the median absolute deviation (MAD) and to use priors stronger than `normal(0, 100)` for the two mean parameters. Then it is generally easy to define weakly informative priors and to make computational algorithm much better conditioned. See a Wiki on [prior choice recommentations](https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations) by the Stan Development Team. 
+
+
+The prior distributions for $\sigma_{c}$ and $\sigma_{t}$ are half-normal distributions with the scale parameters are set to 100 and with a `<lower=0>` constraint in the declaration of the parameter. To relicate the @imbens2015causal analyses, one may want to use inverse gamma distributions with the shape parameters $\alpha$ set to 1 and with the scale parameters $\beta$ set to 0.01. The estimates are almost the same in both prior specifications with a sigle-level model with enough data. Note, however, that the purportedly noninformative inverse-gamma prior can affect inferences in other settings such as hierarchical models, particularly where the number of groups is small and the group-level variance is close to zero. See @gelman2006prior for more details. 
+
 
 The **Stan** program assumming independence between the potential outcomes is then run on the example data:
 

@@ -25,7 +25,7 @@ data {
   int<lower=0,upper=1> z[N];       // treatment assigned
   vector[N_cov] x[N];              // covariates
   vector[N_cov] xz_inter[N];       // interaction terms
-  real<lower=0,upper=1> rho;       // assumed correlation between the potential outcomes
+  real<lower=-1,upper=1> rho;       // assumed correlation between the potential outcomes
 }
 
 parameters {
@@ -41,8 +41,8 @@ parameters {
   row_vector[N_cov] beta_inter_cont; // coefficients for x_inter[N]
   real tau_cont;                     // treatment effect for continuous part
   
-  real<lower=0, upper=10> sigma_t;   // residual SD for the treated
-  real<lower=0, upper=10> sigma_c;   // residual SD for the control
+  real<lower=0> sigma_t;             // residual SD for the treated
+  real<lower=0> sigma_c;             // residual SD for the control
 }
 
 model {
@@ -57,8 +57,10 @@ model {
    beta_cont ~ normal(0, 100);  
    beta_inter_cont ~ normal(0, 100); 
    tau_cont ~ normal(0, 100);
-   sigma_t ~ inv_gamma(1, 0.01);      // inverse gamma priors for scale parameters
-   sigma_c ~ inv_gamma(1, 0.01);
+   sigma_c ~ normal(0, 100);          
+   sigma_t ~ normal(0, 100);
+   // sigma_c ~ inv_gamma(1, 0.01);          
+   // sigma_t ~ inv_gamma(1, 0.01);
 
    // LIKELIHOOD
    for(n in 1:N) {

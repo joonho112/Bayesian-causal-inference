@@ -30,8 +30,8 @@ parameters {
   vector[N_cov] beta;               // coefficients for x[N]
   vector[N_cov] beta_inter;         // coefficients for x_inter[N] 
   real tau;                         // super-population average treatment effect
-  real<lower=0, upper=10> sigma_t;  // residual SD for the treated
-  real<lower=0, upper=10> sigma_c;  // residual SD for the control
+  real<lower=0> sigma_t;            // residual SD for the treated
+  real<lower=0> sigma_c;            // residual SD for the control
 }
 model {
    // PRIORS
@@ -39,8 +39,10 @@ model {
    beta ~ normal(0, 100);
    beta_inter ~ normal(0, 100);
    tau ~ normal(0, 100);
-   sigma_c ~ inv_gamma(1, 0.01);          
-   sigma_t ~ inv_gamma(1, 0.01);
+   sigma_c ~ normal(0, 100);          
+   sigma_t ~ normal(0, 100);
+   // sigma_c ~ inv_gamma(1, 0.01);          
+   // sigma_t ~ inv_gamma(1, 0.01);
 
    // LIKELIHOOD
    y ~ normal(alpha + x*beta + xw_inter*beta_inter + tau * w, sigma_t*w + sigma_c*(1-w));

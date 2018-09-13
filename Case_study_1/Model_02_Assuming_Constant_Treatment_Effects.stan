@@ -25,13 +25,14 @@ data {
 parameters {
   real alpha;                       // intercept
   real tau;                         // super-population average treatment effect
-  real<lower=0, upper=10> sigma;    // pooled residual SD for the control and the treated 
+  real<lower=0> sigma;              // pooled residual SD for the control and the treated 
 }
 model {
    // PRIORS
    alpha ~ normal(0, 100);            
    tau ~ normal(0, 100);
-   sigma ~ inv_gamma(1, 0.01);  
+   sigma ~ normal(0, 100);
+   // sigma ~ inv_gamma(1, 0.01);  
    
    // LIKELIHOOD
    y ~ normal(alpha + tau*w, sigma);
