@@ -1,6 +1,6 @@
 base
-ggplot2
 StanHeaders
+ggplot2
 rstan
 Rcpp
 rstanarm
@@ -16,4 +16,3 @@ forcats
 gridExtra
 MASS
 Matching
-bindrcpp

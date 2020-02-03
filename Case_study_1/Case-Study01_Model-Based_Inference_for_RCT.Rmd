@@ -1,10 +1,10 @@
 ---
-title: "Model-based Inference for Causal Effects in Completely Randomized Experments"
+title: "Model-based Inference for Causal Effects in Completely Randomized Experiments"
 author: 
   - name: Joon-Ho Lee (joonho@berkeley.edu)
   - name: Avi Feller
   - name: Sophia Rabe-Hesketh
-date: "July 30, 2018"
+date: "October 2, 2019"
 output:
   html_document:
     css: styles.css
@@ -33,6 +33,8 @@ knitr::opts_chunk$set(echo = TRUE, warnings = FALSE, message = FALSE)
 
 # Set Stan options
 options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
 
 # Call libraries
 library(rstan)
@@ -98,7 +100,7 @@ where $\mu_{c}$ and $\mu_{t}$ are $\alpha$ and $\alpha + \tau$ respectively, and
 
 ```{r}
 # Basic setup
-set.seed(123456)
+set.seed(654321)
 N <- 500       # number of observations
 alpha <- 1.0   # intercept in the Y model
 tau <- 0.25    # treatment effect
@@ -311,28 +313,42 @@ The posterior predictive distribution of the six missing potential outcomes can 
 
 ```{r, fig.height=5, fig.width=8}
 # Collect MCMC samples for the missing potential outcomes
-mcmc <- as.matrix(fit_simdat)
-ymis_idx <- paste0(ifelse(W[seq(6)] == 0, "y1", "y0"), "[", seq(6), "]")
-subset <- which(colnames(mcmc) %in% ymis_idx)
-mcmc_ymis <- data.frame(mcmc[, subset])
-names(mcmc_ymis) <- colnames(mcmc)[subset]
-mcmc_ymis <- dplyr::select(mcmc_ymis, c("y0[1]", "y0[2]"), everything())
-mcmc_ymis_long <- mcmc_ymis %>% gather(key, value, seq(6), factor_key = TRUE)
-imputed_ymis <- data.frame(key = levels(mcmc_ymis_long$key), apply(mcmc_ymis, 2, mean))
-true_ymis <- data.frame(key = levels(mcmc_ymis_long$key), c(Y_mis[1:6]))  
-names(imputed_ymis) <- c("key", "imputed_ymean"); names(true_ymis) <- c("key", "ymis_true")
+mcmc <- data.frame(as.matrix(fit_simdat)) %>% dplyr:: select(contains("y"))
+
+ymis_idx <- data.frame("y", as.numeric(W != 1), seq_along(W)) %>% 
+  unite("temp", 1:2, sep = "") %>% unite("ymiss", 1:2, sep = ".") %>% as.matrix() 
+  
+var_idx <- names(mcmc) %>% str_sub(end = -2) %in% ymis_idx[, "ymiss"]
+
+mcmc_ymis <- mcmc %>% dplyr::select(names(mcmc)[var_idx]) %>%
+  gather(key, value, seq(500), factor_key = TRUE) %>% 
+  mutate(row_num = as.numeric(str_sub(key, start = 4, end = -2))) %>%
+  arrange(row_num)
+
+str_sub(mcmc_ymis$key, 3, 3) <- "["; str_sub(mcmc_ymis$key, -1, -1) <- "]"
+
+mcmc_ymis <- mcmc_ymis %>%
+   mutate(key = factor(key, levels = as.matrix(mcmc_ymis %>% distinct(key))[, "key"]))
+  
+# Generate dataframes to plot
+mcmc_ymis_plot <- mcmc_ymis %>% filter(row_num <= 6) 
+
+ymis_means <- mcmc_ymis_plot %>%
+  group_by(key) %>%
+  summarise(mean_imputed = mean(value, na.rm = TRUE)) %>%
+  mutate(mean_true = Y_mis[1:6])
 
 # Plot the posterior predictive distributions with the true Y^mis
-ggplot(mcmc_ymis_long, aes(x = value)) + 
+ggplot(mcmc_ymis_plot, aes(x = value)) + 
   geom_density(alpha = 0.1) + 
-  geom_vline(data = imputed_ymis, aes(xintercept = imputed_ymean),  
+  geom_vline(data = ymis_means, aes(xintercept = mean_imputed),  
              linetype = "solid", color = "blue", size = 0.5) + 
-  geom_vline(data = true_ymis, aes(xintercept = ymis_true),  
+  geom_vline(data = ymis_means, aes(xintercept = mean_true),  
              linetype = "dashed", color = "red", size = 0.5) + 
-  geom_text(aes(x = imputed_ymean, y = 0.15, label = sprintf("%.3f", round(imputed_ymean, 3))), 
-            hjust = 0.5, vjust = -1.0, color = "blue", data = imputed_ymis) +
-  geom_text(aes(x = ymis_true, y = 0, label = sprintf("%.3f", round(ymis_true, 3))), 
-                hjust = 0.5, vjust = -1.0, color = "red", data = true_ymis) + 
+  geom_text(aes(x = mean_imputed, y = 0.15, label = sprintf("%.3f", round(mean_imputed, 3))), 
+            hjust = 0.5, vjust = -1.0, color = "blue", data = ymis_means) +
+  geom_text(aes(x = mean_true, y = 0, label = sprintf("%.3f", round(mean_true, 3))), 
+                hjust = 0.5, vjust = -1.0, color = "red", data = ymis_means) + 
   facet_wrap( ~ key, ncol = 2) +   
   labs(title = "Posterior predictive distributions of the missing potential outcomes",  
        subtitle = "with posterior means (blue solid) and true values (red dashed)", x = "")
@@ -682,15 +698,20 @@ The **Stan** program for the Model 3 is fit to the example data:
 
 ```{r, results="hide", cache=TRUE, warning=FALSE, message=FALSE}
 # Compile and run the stan model
+mod3_c <- stanc(file = "Model_03_Independent_Potential_Outcomes_With_Covariates.stan")
+mod3 <- stan_model(model_name =  mod3_c)
+fit_mod3 <- sampling(mod3, data = stan_data, iter = 1000, chains = 4)
+
+
 fit_mod3 <- stan(file = "Model_03_Independent_Potential_Outcomes_With_Covariates.stan",
                  data = stan_data,
-                 iter = 1000, chains = 4)
+                 iter = 1000, chains = 1)
 ```
 
 
 Next the posterior predictive distributions of the first 20 missng control potential outcomes are displayed. We see that the locations of the posterior predictive distributions vary in Model 3, whereas those of Model 1 are almost the same across the 20 missing potential outcomes. 
 
-```{r, fig.height=4, fig.width=8}
+```{r, fig.height=4, fig.width=8, eval=FALSE}
 # Model 1. Without Covariates
 color_scheme_set("red")
 ymis_idx <- paste0(ifelse(w[seq(20)] == 0, "y1", "y0"), "[", seq(20), "]")
@@ -714,7 +735,7 @@ grid.arrange(p1, p3, ncol = 2)
 The estimates of the causal estimands are displayed below. The posterior standard deviations for the ATE and QTE estimates are almost the same as those in Model 1, which means that the independence assumption between the potential outcomes determines the level of uncertainty for the causal estimates rather than the presence of covariates in the model. The posterior means for the ATE and QTEs replicates the estimates presented in the Table 8.6 of @imbens2015causal.  
 
 
-```{r}
+```{r, eval=FALSE}
 param <- c("tau", "tau_fs", "tau_qte25", "tau_qte50", "tau_qte75" )
 print(fit_mod3, pars = param, 
       probs = c(0.1, 0.5, 0.9), digits = 3)

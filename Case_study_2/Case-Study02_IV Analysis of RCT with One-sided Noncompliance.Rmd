@@ -1,0 +1,385 @@
+---
+title: "Instrumental Variables Analysis of Randomized Experiments with One-Sided Noncompliance"
+author: 
+  - name: Joon-Ho Lee (joonho@berkeley.edu)
+  - name: Avi Feller
+  - name: Sophia Rabe-Hesketh
+date: "September 8, 2019"
+output:
+  html_document:
+    css: styles.css
+    fig_caption: yes
+    highlight: default
+    number_sections: yes
+    theme: default
+    toc: yes
+    toc_depth: 2
+  tufte::tufte_html:
+    number_sections: yes
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+bibliography: bibliography.bib
+---
+
+```{r basic_setup, include=FALSE}
+# Set working directory
+setwd("~/Bayesian-causal-inference/Case_study_2")
+
+# Set RMarkdown options
+knitr::opts_chunk$set(echo = TRUE, warnings = FALSE, message = FALSE)
+
+# Set Stan options
+options(mc.cores = parallel::detectCores())
+
+# Call libraries
+library(rstan)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(gridExtra)
+library(kableExtra)
+```
+
+
+# Introduction
+
+- [The goal of this document] In this document, we present Bayesian inferential methods for causal estimands in the presence of noncompliance, when the binary treatment assignment is random and hence ignorable, but the binary treatment receieved is not ignorable. We aim to replicate the analyses presented in Imbens and Rubin (1997). 
+
+
+- [The role of two assumptions] Also, we investigate the role of two assumptions often made in econometric instrumental variables analyses, the exclusion restriction and the monotonicity assumption, without which likelihood functions generally have substantial regions of maxima. 
+
+
+- [Why Bayesian approach?] The effect of adding or dropping assumptions, such as those that are used in the instrumental variables literature, is directly addressed in the Bayesian approach by examining how the posterior predictive distributions for causal estimands change. (particularly with and without exclusion restriction)
+
+
+- [What we're presenting in this document] We apply the Bayesian procedures to real data, thereby demonstrating that the Bayesian methods can yield valid inferences that differ in practically important ways those based on previous methods for analysis in the presence of noncompliance, including intention-to-treat analyses and analyses based on econometric instrumental variables techniques. 
+
+
+
+# Data example: The Sommer-Zeger vitamin A supplement data
+
+We illustrate the methods presented in this document using the data from a randomized experiment to study the effect of vitamin A supplements on infant mortaility in Indonesia. The data was previously analyzed in @sommer1991estimating and is displayed in the following table:
+
+
+Table: [Table 1] Sommer-Zeger vitamin A supplement data
+
+| Compliance <br/> Type | Assignment <br/> $Z_{i}$ | Vitamin supplements <br/> $W_{i}^{obs}$ | Survival <br/> $Y_{i}^{obs}$ | Number of units <br/> ($N$ = 23,682) |
+|--------:|--------:|--------:|--------:|--------:|
+| never-taker | 1 | 0 | 0 | 34 |
+| never-taker | 1 | 0 | 1 | 2,385 |
+| complier | 1 | 1 | 0 | 12 |
+| complier | 1 | 1 | 1 | 9,663 |
+| complier or never-taker | 0 | 0 | 0 | 74 |
+| complier or never-taker | 0 | 0 | 1 | 11,514 |
+| *(not observed)* | 0 | 1 | 0 | 0 |
+| *(not observed)* | 0 | 1 | 1 | 0 |
+
+
+In this experiment, villages in Indonesia were randomly assigned to receive or not to receive vitamin A supplements. This *assignment* to the supplements is denoted by $Z_{i} \in \{0, 1 \}$. Some of the individuals in village assigned to the treatment group, however, did not receive the vitamin supplements, while none of the individuals assigned to the control group received the supplements. The *receipt* of the supplements is considered the treatment of main interest and denoted by $W_{i}^{obs} \in \{0, 1 \}$. Noncompliance in this setting is *one-sided* because all units assigned to the control condition complied with this assignment. The binary outcome variable $Y_{i}^{obs}$ indicates survival of an infant.          
+
+The eight different combinations of three observed binary variables, $Z_{i}$, $W_{i}^{obs}$, and $Y_{i}^{obs}$, are possible in principle. Because all units assigned to the control condition complied with the assignment, however, two combinations with $Z_{i} = 0$ and $W_{i}^{obs} = 1$ were not observed in the sample. The **R** code that follows loads the dataset based on the counts of the six combinations of observed variables shown in Table. 1. 
+
+
+```{r import}
+# Load data: Sommer-Zeger example from Imbens and Rubin (1997)
+z <- c(rep(1, 34 + 2385 + 12 + 9663), 
+       rep(0, 74 + 11514))
+
+w <- c(rep(0, 34 + 2385), 
+       rep(1, 12 + 9663), 
+       rep(0, 74 + 11514))
+
+y <- c(rep(0, 34),
+       rep(1, 2385),
+       rep(0, 12),
+       rep(1, 9663),
+       rep(0, 74),
+       rep(1, 11514))
+```
+
+
+
+# Causal estimands when confronted with noncompliance
+
+## Basic setup: potential outcomes and intention-to-treat effects
+
+Our goal is to estimate the causal effect of the receipt of vitamin A supplements ($W$) on children's survival ($Y$). Throughout this section we make the stable unit treatment value assumption (SUTVA) meaning that there are no versions of the treatments and no causal effects of one unit's treatment assignment on another unit's potential outcome (add citation here). The SUTVA allows us to define the potential outcomes for unit $i$ as a function of unit-level treatment assignment $Z_{i}$ rather than the entire vector $\mathrm{Z}$.     
+
+Let us first define potential outcomes. Let $W_{i}(z)$ be the binary indicator for the treatment that unit $i$ actually would receive given the assignment $z$ for $z = 0, 1$. Then we can postulate the existence of two potential treatment outcomes, $W_{i}(0)$ and $W_{i}(1)$: $W_{i}(0)$ indicates the treatment unit $i$ would receive if assigned to the control ($Z_{i} = 0$), and $W_{i}(1)$ means the treatment unit $i$ would receive if assigned to the active treatment ($Z_{i} = 1$). Both $W_{i}(0)$ and $W_{i}(1)$ take values in $\{0, 1\}$. 
+
+Next we define $Y_{i}(z, W_{i}(z))$ to be the potential outcome for unit $i$ if exposed to treatment $W_{i}(z)$ after being assigned treatment $z$. Since $Y_{i}$ is actually a function of $z$ alone, we can define the row vector with the potential outcomes for unit $i$, $Y_{i} = (Y_{i}(0, W_{i}(0)), Y_{i}(0, W_{i}(0)))$.  
+
+The unit-level intention-to-treat (ITT) causal effect of $Z$ on $W$ is defined to be the difference $W_{i}(1) - W_{i}(0)$. The unit-level ITT causal effect of $Z$ on $Y$ is $Y_{i}(0, W_{i}(0)) - Y_{i}(0, W_{i}(0))$. The average ITT causal effects are the averages of these unit-level causal effects over the population. The average effect of $Z$ on $W$ is $\mathrm{ITT}_{W} = \sum_{i=1}^{N}{[W_{i}(1) - W_{i}(0)]}/N$, and the average effect of $Z$ on $Y$ is $\mathrm{ITT}_{Y} = \sum_{i=1}^{N}{[Y_{i}(0, W_{i}(0)) - Y_{i}(0, W_{i}(0))]}/N$.        
+
+
+## Complier average causal effects
+
+The pair of potential treatment outcomes, $W_{i}(0)$ and $W_{i}(1)$, captures the compliance behavior of the units. In principle, there may be the four types of subpopulation defined by compliance behavior -- compliers, never-takers, always-takers and defiers. The first three columns of Table 2 summarizes the definition of each compliance type based on a unit's behavior given assignment to the active treatment. Compliance type is denoted by a group indicator $G_{i} \in$ {co, nt, at, df} for the purpose of our discussion.      
+
+
+Table: [Table 2] Unit-level causal effects of treatment assignment and receipt
+
+| Compliance type <br/> $G_{i}$ | $W_{i}(0)$ | $W_{i}(1)$ | ITT effect of <br/> $Z$ on $W$ | ITT effect of <br/> $Z$ on $Y$ | Attributed causal effect of <br/> $W$ on $Y$ |
+|-----------:|--------:|--------:|--------:|-------------:|-------------:|
+| complier (co)     | 0 | 1 | 1 | $Y_{i}(1, 1) - Y_{i}(0, 0)$ | $Y_{i}(1, 1) - Y_{i}(0, 0)$ |
+| never-taker (nt)  | 0 | 0 | 0 | $Y_{i}(1, 0) - Y_{i}(0, 0)$ | --                          |
+| always-taker (at) | 1 | 1 | 0 | $Y_{i}(1, 1) - Y_{i}(0, 1)$ | --                          |
+| defier (df)       | 1 | 0 | -1| $Y_{i}(1, 0) - Y_{i}(0, 1)$ | $Y_{i}(0, 1) - Y_{i}(1, 0)$ | 
+
+
+[Paragraphs discussing weak exclusion restriction => rules out the never- and always-takers]
+
+The fourth column indicates the intention-to-treat effect of treatment assignment ($Z$) on the receipt of treatment ($W$) separately by compliance status. Note that never-takers and always-takers have zero ITT effects of $Z$ on $W$, since they cannot be induced to switch treatment receipts according to treatment assignments. The average of unit-level effect of the assignment on the receipt of treatment, $W_{i}(1) - W_{i}(0)$, over all relevant units is thus always zero for both subgroups. Obviously, both never-takers and always-takers do not address causal effect of the receipt of treatment ($W$) on outcome ($Y$) because the former compares outcomes both with $W_{i} = 0$ and the latter compares outcomes both with $W_{i} = 0$.   
+
+
+[Paragraphs discussing strong monotonicity assumption => rules out defiers]
+
+
+[Paragraphs wrapping up CACE]
+
+
+
+
+# Bayesian model-based instrumental variables analyses
+
+[placeholder]
+
+
+
+# Analyzing the example data with **Stan**
+
+```{r}
+# Collect data into a list format suitable for Stan
+stan_data <- list(N = length(y), y = y, z = z, w = w)
+```
+
+
+
+## **Stan** model with exclusion restriction
+
+```
+data {
+  int<lower=1> N;
+  int<lower=0,upper=1> z[N];   // treatment assigned
+  int<lower=0,upper=1> w[N];   // treatment received  
+  int<lower=0,upper=1> y[N];   // outcomes  
+}
+parameters {
+
+  // PRINCIPAL STRATUM OUTCOME MEANS
+  real<lower=0,upper=1> eta_c0;
+  real<lower=0,upper=1> eta_c1;
+  real<lower=0,upper=1> eta_nt;
+
+  // OVERALL PROBABILITY OF BEING A COMPLIER
+  real<lower=0,upper=1> pi;
+} 
+model {
+  
+  // PRIORS FOR OUTCOME (from Imbens & Rubin (1997))
+  eta_c0 ~ beta(2, 2);  
+  eta_c1 ~ beta(2, 2);  
+  eta_nt ~ beta(2, 2);  
+
+  // PRIORS FOR COMPLIER PROBABILITY
+  // implicit prior: pi ~ Unif(0,1)
+
+  // MODELS FOR OUTCOME
+  for(n in 1:N){
+    
+    // Never Takers
+    if(z[n] == 1 && w[n] == 0){
+      target +=  log(1 - pi) + bernoulli_lpmf(y[n] | eta_nt) ;
+    }
+    
+    // Complier (control) or Never Taker
+    else if(z[n] == 0 && w[n] == 0){
+      target += log_sum_exp(
+        log(1 - pi) + bernoulli_lpmf(y[n] | eta_nt),  // Never taker
+        log(pi) + bernoulli_lpmf(y[n] | eta_c0) );    // Complier (control)
+    }
+    
+    // Complier (treated)
+    else if(z[n] == 1 && w[n] == 1){
+      target += log(pi) + bernoulli_lpmf(y[n] | eta_c1) ; // Complier (treat)
+    }
+  }
+}
+```
+
+
+```{r, results="hide", cache=TRUE}
+# Compile and run the stan model
+stan_fit_ER <- stan( file = "Model_01_CACE_with_Exclusion_Restriction.stan", 
+                     data = stan_data, 
+                     iter = 1000, chains = 4)
+```
+
+
+```{r}
+# Print output
+print(stan_fit_ER, probs = c(0.1, 0.5, 0.9), digits = 3)
+```
+
+
+```{r}
+# Extract parameters 
+eta_c1 <- rstan::extract(stan_fit_ER, pars = "eta_c1")$eta_c1
+eta_c0 <- rstan::extract(stan_fit_ER, pars = "eta_c0")$eta_c0
+
+# Calculate treatment effect (in per-10,000 units)
+cace <- (eta_c1 - eta_c0)*10^3
+
+# Plot CACE
+hist(cace, main = "ITT for Compliers with Exclusion Restriction", 
+     xlab = "ITT for Compliers (per 10,000)", col = "grey", border = "white",
+     xlim = c(-4, 10), breaks = 30)
+
+# Plot median CACE
+abline(v = median(cace), col = 2)
+
+# plot 90% CI
+quantile(cace, probs = c(0.05, 0.95))
+abline(v = quantile(cace, probs = c(0.05, 0.95)), lty = 2, col = 2)
+```
+
+
+
+## **Stan** model without exclusion restriction for never takers
+
+```
+data {
+  int<lower=1> N;
+  int<lower=0,upper=1> z[N];   // treatment assigned
+  int<lower=0,upper=1> w[N];   // treatment received  
+  int<lower=0,upper=1> y[N];   // outcomes  
+}
+parameters {
+
+  // PRINCIPAL STRATUM OUTCOME MEANS
+  real<lower=0,upper=1> eta_c0;
+  real<lower=0,upper=1> eta_c1;
+  real<lower=0,upper=1> eta_nt0;
+  real<lower=0,upper=1> eta_nt1;
+  
+  // OVERALL PROBABILITY OF BEING A COMPLIER
+  real<lower=0,upper=1> pi;
+} 
+model {
+  
+  // PRIORS FOR OUTCOME (from Imbens & Rubin (1997))
+  eta_c0 ~ beta(2, 2);  
+  eta_c1 ~ beta(2, 2);  
+  eta_nt0 ~ beta(2, 2);  
+  eta_nt1 ~ beta(2, 2);  
+
+  // PRIORS FOR COMPLIER PROBABILITY
+  // implicit prior: pi ~ Unif(0,1)
+
+  // MODELS FOR OUTCOME
+  for(n in 1:N){
+    
+    // Never Takers (treat)
+    if(z[n] == 1 && w[n] == 0){
+      target += log(1 - pi) + bernoulli_lpmf(y[n] | eta_nt1);
+    }
+    
+    // Complier (control) or Never Taker (control)
+    else if(z[n] == 0 && w[n] == 0){
+      target +=  log_sum_exp(
+        log(1 - pi) + bernoulli_lpmf(y[n] | eta_nt0),  // Never taker
+        log(pi) + bernoulli_lpmf(y[n] | eta_c0));      // Complier (control)
+    }
+    
+    // Complier (treated)
+    else if(z[n] == 1 && w[n] == 1){
+      target += log(pi) + bernoulli_lpmf(y[n] | eta_c1) ;  // Complier (treat)
+    }
+  }
+}
+```
+
+
+```{r, results="hide", cache=TRUE}
+# Compile and run the stan model
+stan_fit_noER <- stan( file = "Model_02_CACE_without_Exclusion_Restriction.stan", 
+                       data = stan_data, 
+                       iter = 1000, chains = 4)
+```
+
+
+```{r}
+# Print output
+print(stan_fit_noER, probs = c(0.1, 0.5, 0.9), digits = 3)
+```
+
+
+```{r}
+# Extract parameters 
+eta_c1_no_er <- rstan::extract(stan_fit_noER, pars = "eta_c1")$eta_c1
+eta_c0_no_er <- rstan::extract(stan_fit_noER, pars = "eta_c0")$eta_c0
+
+eta_nt1 <- rstan::extract(stan_fit_noER, pars = "eta_nt1")$eta_nt1
+eta_nt0 <- rstan::extract(stan_fit_noER, pars = "eta_nt0")$eta_nt0
+
+# Calculate treatment effect (in per-10,000 units)
+cace_no_er <- (eta_c1_no_er - eta_c0_no_er)*10^3
+nace <- (eta_nt1 - eta_nt0)*10^3
+```
+
+
+```{r}
+# Plot CACE
+hist(cace_no_er, main = "ITT for Compliers without Exclusion Restriction", 
+     xlab = "ITT for Compliers (per 10,000)", col = "grey", border = "white",
+     xlim = c(-4, 10), breaks = 30)
+
+# Plot median CACE
+abline(v = median(cace_no_er), col = 2)
+
+# Plot 90% CI
+quantile(cace_no_er, probs = c(0.05, 0.95))
+abline(v = quantile(cace_no_er, probs = c(0.05, 0.95)), lty = 2, col = 2)
+```
+
+
+```{r}
+# Plot NACE
+hist(nace, main = "ITT for Never Takers", 
+     xlab = "ITT for Never Takers (per 10,000)", col = "grey", border = "white",
+     xlim = c(-25, 40), breaks = 30)
+
+# Plot median CACE
+abline(v = median(nace), col = 2)
+
+# Plot 90% CI
+quantile(nace, probs = c(0.05, 0.95))
+abline(v = quantile(nace, probs = c(0.05, 0.95)), lty = 2, col = 2)
+
+
+# Plot joint distribution
+plot(cace_no_er, nace, type = 'n',
+     xlab = "ITT for Compliers", ylab = "ITT for Never Takers",
+     xlim = c(-4, 10), ylim = c(-30, 30), bty = 'n')
+abline(h = 0)
+abline(v = 0)
+points(cace_no_er, nace, pch = 20)
+```
+
+-  Compare with and without exclusion restriction
+
+```{r}
+boxplot(cace, cace_no_er,
+        names = c("With Excl. Rest.", "Without Excl. Rest."),
+        col = "grey",
+        ylab = "ITT for Compliers")
+```
+
+
+
+# References
+
+

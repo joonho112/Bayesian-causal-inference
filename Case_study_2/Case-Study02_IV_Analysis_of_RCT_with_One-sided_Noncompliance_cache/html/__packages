@@ -1,0 +1,17 @@
+base
+StanHeaders
+ggplot2
+rstan
+Rcpp
+rstanarm
+bayesplot
+tidyverse
+tibble
+tidyr
+readr
+purrr
+dplyr
+stringr
+forcats
+gridExtra
+kableExtra
