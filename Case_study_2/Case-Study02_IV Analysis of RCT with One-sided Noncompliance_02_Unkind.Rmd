@@ -1,0 +1,249 @@
+---
+title: "Instrumental Variables Analysis of Randomized Experiments with One-Sided Noncompliance"
+author: 
+  - name: Joon-Ho Lee (joonho@berkeley.edu)
+  - name: Avi Feller
+  - name: Sophia Rabe-Hesketh
+date: "February 18, 2019"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: yes
+    theme: readable
+    highlight: haddock
+    css: styles.css
+    fig_caption: yes
+  tufte::tufte_html:
+    number_sections: yes
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+bibliography: bibliography.bib
+---
+
+```{r basic_setup, include=FALSE}
+# Set working directory
+setwd("~/Bayesian-causal-inference/Case_study_2")
+
+# Set RMarkdown options
+knitr::opts_chunk$set(echo = TRUE, warnings = FALSE, message = FALSE)
+
+# Call libraries
+library(rstan)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(gridExtra)
+library(kableExtra)
+
+# Set Stan options
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+```
+
+
+# Introduction
+
+- [The goal of this document] 
+
+Here we present *model-based strategy* in instrumental variable settings. 
+
+If you're interested in moment-based analysis and bounding estimates, refer to this and this. 
+
+
+- [The advantages of using model-based analyses]
+
+
+
+- [The structure of model-base analyses]
+
+We start by building statistical models for the potential outcomes. 
+
+We also build a statistical models for the compliance behavior. 
+
+We use these models to simulate the missing potential outcomes and the missing compliance behaviors, and use those in turn to draw inferences regarding causal effects of the primary treatment for the subset of units who would always comply with their assignment. 
+
+
+- [The structure of this document]
+
+
+
+
+
+# Data example: The Sommer-Zeger vitamin A supplement data
+
+We illustrate the methods presented in this document using the data from a randomized experiment to study the effect of vitamin A supplements on infant mortaility in Indonesia. The data was previously analyzed in @sommer1991estimating and is displayed in the following table:
+
+
+Table: [Table 1] Sommer-Zeger vitamin A supplement data
+
+| Compliance <br/> Type | Assignment <br/> $Z_{i}$ | Vitamin supplements <br/> $W_{i}^{\text{obs}}$ | Survival <br/> $Y_{i}^{\text{obs}}$ | Number of units <br/> ($N$ = 23,682) |
+|--------:|--------:|--------:|--------:|--------:|
+| never-taker | 1 | 0 | 0 | 34 |
+| never-taker | 1 | 0 | 1 | 2,385 |
+| complier | 1 | 1 | 0 | 12 |
+| complier | 1 | 1 | 1 | 9,663 |
+| complier or never-taker | 0 | 0 | 0 | 74 |
+| complier or never-taker | 0 | 0 | 1 | 11,514 |
+| *(not observed)* | 0 | 1 | 0 | 0 |
+| *(not observed)* | 0 | 1 | 1 | 0 |
+
+
+In this experiment, villages in Indonesia were randomly assigned to receive or not to receive vitamin A supplements. This *assignment* to the supplements is denoted by $Z_{i} \in \{0, 1 \}$. Some of the individuals in village assigned to the treatment group, however, did not receive the vitamin supplements, while none of the individuals assigned to the control group received the supplements. The *receipt* of the supplements is considered the treatment of main interest and denoted by $W_{i}^{\text{obs}} \in \{0, 1 \}$. Noncompliance in this setting is *one-sided* because all units assigned to the control condition complied with this assignment. The binary outcome variable $Y_{i}^{\text{obs}}$ indicates survival of an infant.          
+
+The eight different combinations of three observed binary variables, $Z_{i}$, $W_{i}^{\text{obs}}$, and $Y_{i}^{\text{obs}}$, are possible in principle. Because all units assigned to the control condition complied with the assignment, however, two combinations with $Z_{i} = 0$ and $W_{i}^{\text{obs}} = 1$ were not observed in the sample. The **R** code that follows loads the dataset based on the counts of the six combinations of observed variables shown in Table. 1. 
+
+
+```{r import}
+# Load data: Sommer-Zeger example from Imbens and Rubin (1997)
+z <- c(rep(1, 34 + 2385 + 12 + 9663), 
+       rep(0, 74 + 11514))
+
+w <- c(rep(0, 34 + 2385), 
+       rep(1, 12 + 9663), 
+       rep(0, 74 + 11514))
+
+y <- c(rep(0, 34),
+       rep(1, 2385),
+       rep(0, 12),
+       rep(1, 9663),
+       rep(0, 74),
+       rep(1, 11514))
+```
+
+
+
+
+# Model-based analysis in instrumental variable settings
+
+## Basic setup
+
+Let us first define potential outcomes to fit the instrumental variable settings. For unit $i$, the observed treatment status $W_{i}^{\text{obs}}$ is
+
+$$
+W_{i}^{\text{obs}} = W_{i}(Z_{i}) = \begin{cases}
+W_{i}(0) & \text{if $Z = 0$}, \\
+W_{i}(1) & \text{if $Z = 1$}.
+\end{cases}
+$$
+
+$W_{i}(0)$ is the treatment that unit $i$ would receive if assinged to the control ($Z_{i} = 0$). $W_{i}(1)$ is the treatment that unit $i$ would receive if assinged to the treatment ($Z_{i} = 1$). The pair of potential responses to treatment assignment for unit $i$, $(W_{i}(0), W_{i}(1))$ describes the compliance behavior. For unit $i$, 
+
+$$
+G_{i} = \begin{cases}
+c & \text{(unit $i$ is a complier),} & \text{if $W_{i}(z) = z$, for $z = 0, 1$},  \\
+n & \text{(unit $i$ is a never-taker),} & \text{if $W_{i}(z) = 0$, for $z = 0, 1$},  \\
+a & \text{(unit $i$ is an always-taker),} & \text{if $W_{i}(z) = 1$, for $z = 0, 1$},  \\
+d & \text{(unit $i$ is a defier),} & \text{if $W_{i}(z) = 1-z$, for $z = 0, 1$}. 
+\end{cases}
+$$
+We denote the proportions of the four compliance types in the population as $\pi_{g} = \Pr(G_{i} = g)$ for $g \in \{c, n, a, d\}$. The compliance behavior $G_{i}$ is a *latent pre-treatment variable* because it is not fully observed and unaffected by the treatments. 
+
+
+In the one-sided noncompliance case, all units assigned to the control group complied with the assignment, that is, $W_{i}(0) = 0$ for all units. Thus, the *monotonicity* assumption ($W_{i}(1) \geq W_{i}(0)$) is automatically satisfied and rules out the presence of both always-takers ($a$) and defiers ($d$) in the super-population [@imbens2015causal].      
+
+
+For the primary outcomes, we define potential outcomes, $Y_{i}(z, w)$, the outcome observed if unit $i$ were assigned treatment $z$ and received treatment $w$. The observed outcome for unit $i$ equals
+
+$$
+Y_{i}^{\text{obs}} = Y_{i}(Z_{i}, W_{i}(Z_{i})) = \begin{cases}
+Y_{i}(0, 0), & \text{if $Z_{i} = 0, W_{i}^{\text{obs}} = 0$}, \\ 
+Y_{i}(0, 1), & \text{if $Z_{i} = 0, W_{i}^{\text{obs}} = 1$}, \\
+Y_{i}(1, 0), & \text{if $Z_{i} = 1, W_{i}^{\text{obs}} = 0$}, \\
+Y_{i}(1, 1), & \text{if $Z_{i} = 1, W_{i}^{\text{obs}} = 1$}.
+\end{cases}
+$$
+
+
+Since both always-takers ($a$) and defiers ($d$) are not present in the one-sided noncompliance setting, we can infer the compliance type for all units with $Z_{i} = 1$. The units with ($Z_{i} = 1, W_{i}^{\text{obs}} = 0$) must be *never-takers*, and the units with ($Z_{i} = 1, W_{i}^{\text{obs}} = 1$) must be *compliers*. For units with $Z_{i} = 0$, however, we could not infer their compliance types. For a unit with ($Z_{i} = 0, W_{i}^{\text{obs}} = 0$), we know that the unit is absent because $W_{i}(0) = 0$ for all unit $i$. But for a unit with ($Z_{i} = 0, W_{i}^{\text{obs}} = 0$), we can only infer that the unit is a *complier* or a *never-taker* because the observed behavior is consistent with those of both compliance types. 
+
+
+Now consider the intention-to-treat (ITT) effect, the average effect of treatment assignment $Z_{i}$ on the outcome $Y_{i}$. We can decompose the super-population ITT effect in the one-sided noncompliance case into a weighted average of the subgroup effects by two compliance types (compliers and never-takers):
+
+
+$$
+\begin{equation}
+\begin{split}
+\text{ITT}_{Y} &= \sum_{g \in \{c, n\}}{\mathbb{E}[Y_{i}(1, W_{i}(1))-Y_{i}(0, W_{i}(0))|G_{i} = g]} \cdot\Pr(G_{i} = g) \\
+&= \mathbb{E}[Y_{i}(1, 1)-Y_{i}(0, 0)|G_i = c] \cdot \pi_c + \mathbb{E}[Y_{i}(1, 0)-Y_{i}(0, 0)|G_i = n] \cdot \pi_n \\
+&= \text{ITT}_Y^{c} \cdot\pi_c + \text{ITT}_Y^n \cdot \pi_n
+\end{split}
+\end{equation}
+$$
+
+
+The two subgroup effects on $Y$ by compliance type cannot be estimated directly from the observed data because the latent compliance behavior for units assigned to the control condition ($Z_{i} = 0$) cannot be inferred. But under an additional assumption, *exclusion restrictions*, we can still disentangle the ITT effects by compliance status. Exclusion restrictions capture the notion that there is no effect of assignment $Z_{i}$ on the outcome $Y_i$, in the absence of an effect of the assignment of treatment $Z_i$ on the treatment received $W_i$ [@imbens2015causal]. For all units with $G_i = n$ (never-takers), the exclusion restriction requires $Y_i(1, 0)$ to be equal to $Y_i(0, 0)$. In other words, the potential outcomes are unaffected by the assignment $Z_i$ for never-takers who would not receive the treatments even if assigned to take them.              
+
+
+Because the super-population average ITT effect for never-takers ($\text{ITT}_Y^n$) is zero under the exclusion restriction, the ITT effect on the primary outcome $\text{ITT}_Y$ can be simplified to 
+
+$$
+\begin{equation}
+\begin{split}
+\text{ITT}_{Y} &= \mathbb{E}[Y_{i}(1, 1)-Y_{i}(0, 0)|G_i = c] \cdot \pi_c \\
+&= \mathbb{E}[Y_{i}(1)-Y_{i}(0)|G_i = c] \cdot \pi_c \\
+&= \text{ITT}_Y^{c} \cdot\pi_c. 
+\end{split}
+\end{equation}
+$$
+
+Note that we are dropping the $z$ argument in the potential outcomes because $z$ is always equal to $w$ under the exclusion restriction for never-takers. The estimand of our primary interest, the complier average causal effect ($\text{ITT}_Y^{c}$), is now the ratio of the ITT effect of $Z_i$ on the outcome $Y_i$ ($\text{ITT}_{Y}$) and the proportion of compliers in the populaion ($\pi_c$).         
+
+
+## The structure of model-based analyses for the one-sided noncompliance setting
+
+Now we develop a model-based, or an imputation-based approach for estimating causal effects in randomized experiments with one-sided noncompliance, maintaining the exclusion restriction for never-takers. This strategy is similar to that used in completely randomized experiments (See [the first Stan case study on Bayesian causal inference](https://mc-stan.org/users/documentation/case-studies/model-based_causal_inference_for_RCT.html)). We define the causal estimand in term of observed and missing variables as $\tau(\mathrm{Y}^{\text{obs}}, \mathrm{Y}^{\text{mis}}, \mathrm{W}^{\text{obs}}, \mathrm{W}^{\text{mis}}, \mathrm{Z})$. To derive the posterior distribution of this estimand, we derive the posterior predictive distribution of the missing data ($\mathrm{Y}^{\text{mis}}, \mathrm{W}^{\text{mis}}$) given the observed data $(\mathrm{Y}^{\text{obs}}, \mathrm{W}^{\text{obs}}, \mathrm{Z})$. Here $W_i^{\text{mis}}$ is defined as $W_i(1-Z_i)$ and $Y_i^{\text{mis}}$ is defined as $Y_i(1-W_i^{\text{obs}})$ only for compliers. 
+
+
+
+The posterior predictive distribution of missing potential outcomes is given by 
+
+$$
+\begin{array}{rcl}
+\Pr(\mathrm{Y}^{\text{mis}}, \mathrm{W}^{\text{mis}}|\mathrm{Y}^{\text{obs}}, \mathrm{W}^{\text{obs}}, \mathrm{Z}) &=& \displaystyle\int{\Pr(\mathrm{Y}^{\text{mis}}, \mathrm{W}^{\text{mis}}, \theta | \mathrm{Y}^{\text{obs}}, \mathrm{W}^{\text{obs}}, \mathrm{Z})d\theta}  
+\\ &=& \displaystyle\int{\Pr(\mathrm{Y}^{\text{mis}}, \mathrm{W}^{\text{mis}} | \mathrm{Y}^{\text{obs}}, \mathrm{W}^{\text{obs}}, \mathrm{Z}, \theta) \cdot \Pr(\theta | \mathrm{Y}^{\text{obs}}, \mathrm{W}^{\text{obs}}, \mathrm{Z})d\theta}.
+\end{array}
+$$
+
+The integral includes the two factors of uncertainty in the model by taking a weighted average of (1) the sampling distribution for the imputed missing potential outcomes given parameters, treatment assignment, and observed potential coutcomes, with weights given by (2) the posterior distribution of the model parameters $\theta$. The first term encapsulates the uncertainty in the imputation and the second term captures the uncertainty due to parameter estimation given observations.
+
+
+### The sampling distribution for the missing potential outcomes
+
+The first term is a function of only the joint distribution of all four potential outcomes, ($Y_i(0), Y_i(1), W_i(0), W_i(1)$), given parameters because the assignment mechanism is *ignorable* given unconfounded treatment assignment. The model-based strategy thus starts from modeling the joint distribution of potential outcomes, which is equivalent to the joint distribution of ($Y_i(0), Y_i(1), G_i$) because $G_i$ is one-to-one function of ($W_i(0), W_i(1)$). This joint distribution can be factored into two subparts: (1) a model for outcomes given compliance type, and (2) a model for compliance type:
+
+
+
+
+
+
+
+
+
+
+
+### The posterior distribution of the model parameters
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# References
+
+
