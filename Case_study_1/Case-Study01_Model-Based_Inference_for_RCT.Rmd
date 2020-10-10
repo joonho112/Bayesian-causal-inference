@@ -698,9 +698,9 @@ The **Stan** program for the Model 3 is fit to the example data:
 
 ```{r, results="hide", cache=TRUE, warning=FALSE, message=FALSE}
 # Compile and run the stan model
-mod3_c <- stanc(file = "Model_03_Independent_Potential_Outcomes_With_Covariates.stan")
-mod3 <- stan_model(model_name =  mod3_c)
-fit_mod3 <- sampling(mod3, data = stan_data, iter = 1000, chains = 4)
+# mod3_c <- stanc(file = "Model_03_Independent_Potential_Outcomes_With_Covariates.stan")
+# mod3 <- stan_model(model_name =  mod3_c)
+# fit_mod3 <- sampling(mod3, data = stan_data, iter = 1000, chains = 4)
 
 
 fit_mod3 <- stan(file = "Model_03_Independent_Potential_Outcomes_With_Covariates.stan",
