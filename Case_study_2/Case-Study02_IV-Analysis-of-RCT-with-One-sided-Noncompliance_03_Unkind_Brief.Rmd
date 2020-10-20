@@ -48,7 +48,7 @@ Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
 
 # Introduction
 
-We aim to replicate the estimates in Table 4 of @imbens1997bayesian, 
+We aim to replicate the estimates in @imbens1997bayesian, 
 
 
 # The Sommer-Zeger vitamin A supplement data
@@ -206,7 +206,7 @@ data {
 Next, we define a full parameter vector $\theta$ for the model. With no defiers and always-takers in the one-sided noncompliance setting ($\pi_{a}=\pi_{d}=0$), we need to define only the population probability of a unit being a complier $\pi_{c} = \Pr(G_i = c|Z_i)$ because the probability of being a never-taker $\pi_{n}$ is $1-\pi_{c}$.        
 
 
-With binary outcomes, we assume that the outcome distribution for each compliance type follows a binomial distribution with the probability of survival of an infant for compliance type $g \in \{c, n\}$ when assigned $z \in \{0, 1\}$, which we denote as $\eta_{gz}$. There are four relevant scalar parameters for the outcome distributions: $\eta_{c0}$, $\eta_{c1}$, $\eta_{n0}$, and $\eta_{n1}$. Due to the exclusion restriction, however, we assume that the model parameters are the same under $z = 0$ and $z = 1$ for never-takers (i.e., $\eta_{n0} = \eta_{n1} = \eta_{n} $) because the potential outcomes are assumed to be unaffected by the treatment assignment $Z_i$ for them. Thus, the complete parameter vector $\theta$ consists of four parameters, $(\pi_{c}, \eta_{c0}, \eta_{c1}, \eta_{n})$ and coded as follows in the **Stan** program:
+With binary outcomes, we assume that the outcome distribution for each compliance type follows a binomial distribution with the probability of survival of an infant for compliance type $g \in \{c, n\}$ when assigned $z \in \{0, 1\}$, which we denote as $\eta_{gz}$. There are four relevant scalar parameters for the outcome distributions: $\eta_{c0}$, $\eta_{c1}$, $\eta_{n0}$, and $\eta_{n1}$. Due to the exclusion restriction, however, we assume that the model parameters are the same under $z = 0$ and $z = 1$ for never-takers (i.e., $\eta_{n0} = \eta_{n1} = \eta_{n}$) because the potential outcomes are assumed to be unaffected by the treatment assignment $Z_i$ for them. Thus, the complete parameter vector $\theta$ consists of four parameters, $(\pi_{c}, \eta_{c0}, \eta_{c1}, \eta_{n})$ and coded as follows in the **Stan** program:
 
 
 ```
@@ -324,7 +324,7 @@ print(stan_fit_ER, probs = c(0.05, 0.5, 0.95), digits = 3)
 Before interpreting the results, it is necessary to check that the chains have converged for each parameter. The $\hat{R}$ statistics shown in the rightmost column of the model summary are all less than 1.1. Also the effective sample size estimates are sufficient for inference. According to the @gelman1992inference criterior for convergence, it seems that **Stan** has produced an adequate approximation of the posterior.
 
 
-
+The posterior distribution of CACE with exclusion restriction is shown in the following histogram, which replicates the Figure 3 of @imbens1997bayesian. With exclusion restriction for never-takers, the posterior mean of the CACE is 3.21, and the 90% credible interval is (1.41, 5.14) in per 1,000 individuals. This result suggests that receipt of vitamin A treatment is highly likeliy to have a positive effect on infant survival for compliers in the population.   
 
 
 
@@ -337,18 +337,166 @@ ggplot(data = df_CACE, aes(x = CACE)) +
   geom_histogram(color = "black", fill = "gray95") + 
   geom_vline(xintercept = c(quantile(CACE, probs = c(0.05, 0.50, 0.95))), 
              color = "red", linetype = "longdash") +
+  geom_text(aes(3.8, 25), label = "Median = 3.20", color = "red", size = 4) +
   scale_x_continuous("CACE (in per 1,000 units)",
                      breaks = seq(from = -4, to = 10, by = 2)) + 
-  labs(title = "Histogram of CACE with exclusion restriction") + 
+  labs(title = "Histogram of CACE with exclusion restriction", 
+       subtitle = "with median and 90% credible interval") + 
   theme_bw() + theme(panel.grid = element_blank()) 
 ```
 
 
 
 
+## **Stan** model *without* exclusion restriction for never-takers
+
+In this section we assess the sensitivity of the CACE estimate to the exclusion restriction for never-takers. Without the exclusion restriction, the potential outcomes for never-takers are assumed to be affected by the treatment assignment $Z_i$. Hence we assume that the outcome model parameters under different treatment assignment, $\eta_{n0}$ and $\eta_{n1}$, are not the same for never-takers. Now the complete parameter vector is $\theta = (\pi_{c}, \eta_{c0}, \eta_{c1}, \eta_{n0}, \eta_{n1})$ and coded as follows in the **Stan** program:
+
+
+```
+parameters {
+  // Population probability of being a complier
+  real<lower=0,upper=1> pi_c;
+  
+  // Probabilities for the binomial outcome distributions
+  real<lower=0,upper=1> eta_c0;
+  real<lower=0,upper=1> eta_c1;
+  real<lower=0,upper=1> eta_n0;
+  real<lower=0,upper=1> eta_n1;
+} 
+```
+
+The `model` block shares the almost the same prior distributions and the likelihood with that of the model specified in the previous section. We use the identical conjugate Beta priors for the binomial outcome distributions with $\alpha = \beta = 2$ for $(\eta_{c0}, \eta_{c1}, \eta_{n0}, \eta_{n1})$. The full likelihood function has the identical mixture structure defined across three data subsets $\mathcal{S}(0, 0)$, $\mathcal{S}(1, 0)$, and $\mathcal{S}(1, 1)$. The only difference is the parameterization of the outcome distributions for never-takers. Instead of using a common parameter $\eta_{n}$ for modeling the conditional distributions of observed outcomes regardless of treatment assignment, we use separate outcome model parameters for $f(Y_{i}^{\text{obs}}|G_i = n, Z_i = 0, \eta_{n0})$ and $f(Y_{i}^{\text{obs}}|G_i = n, Z_i = 1, \eta_{n1})$:    
+
+
+```
+model {
+  // Prior for Complier probability
+  // implicit prior: pi_c ~ Unif(0, 1)
+  
+  // Priors for outcome model parameters
+  eta_c0 ~ beta(2, 2);  
+  eta_c1 ~ beta(2, 2);  
+  eta_n0 ~ beta(2, 2);
+  eta_n1 ~ beta(2, 2);
+
+  // Likelihood
+  for(n in 1:N){
+    
+    // Complier (assigned to treatment)
+    if(Z[n] == 1 && W[n] == 1){
+      target += log(pi_c) + bernoulli_lpmf(Y[n] | eta_c1) ;
+    }
+    
+    // Never-taker (assigned to treatment)
+    else if(Z[n] == 1 && W[n] == 0){
+      target +=  log(1 - pi_c) + bernoulli_lpmf(Y[n] | eta_n1);
+    }
+    
+    // Complier or Never-taker (assigned to control)
+    else if(Z[n] == 0 && W[n] == 0){
+      target += log_sum_exp(
+        log(1 - pi_c) + bernoulli_lpmf(Y[n] | eta_n0),  // Never-taker
+        log(pi_c) + bernoulli_lpmf(Y[n] | eta_c0));     // Complier
+    }
+  }
+}
+```
+
+In addition to the main causal estimand, the super-population complier average causal effect (CACE, $\eta_{c1} - \eta_{c0}$), we can now define the super-population average causal effect of treatment assignment on outcome for never-takers (NACE, $\eta_{n1} - \eta_{n0}$) in the `transformed parameters` block:
+
+
+```
+transformed parameters {
+  // Super-population average causal effects 
+  real CACE; 
+  real NACE;
+  CACE = (eta_c1 - eta_c0)*10^3;
+  NACE = (eta_n1 - eta_n0)*10^3;
+}
+```
+
+
+The **Stan** program **Model_02_CACE_without_Exclusion_Restriction.stan** is then fit to the example data:  
+
+
+```{r, results="hide", warnings=FALSE, cache=TRUE}
+# Compile and run the stan model
+stan_fit_noER <- stan( file = "Model_02_CACE_without_Exclusion_Restriction.stan", 
+                       data = stan_data, 
+                       iter = 1000, chains = 4)
+```
+
+
+The CACE and NACE estimates without assuming exclusion restriction for never-takers are displayed in tabular form as follows. The $\hat{R}$ statistics and the effective sample size estimates suggest that chains have converged for each parameter:
+
+```{r}
+# Print output
+print(stan_fit_noER, probs = c(0.05, 0.5, 0.95), digits = 3)
+```
+
+
+The following histogram replicates the Figure 1 of @imbens1997bayesian. The 90% credible interval of the posterior distribution suggests that the true CACE without exclusion restriction is likely to be within the range -0.43 to 6.21 in per 1,000 units:
+
+
+```{r}
+# Plot the histogram of CACE with exclusion restriction
+CACE <- rstan::extract(stan_fit_noER, pars = "CACE")$CACE
+df_CACE <- data.frame(CACE); names(df_CACE) <- c("CACE")
+
+ggplot(data = df_CACE, aes(x = CACE)) + 
+  geom_histogram(color = "black", fill = "gray95") + 
+  geom_vline(xintercept = c(quantile(CACE, probs = c(0.05, 0.50, 0.95))), 
+             color = "red", linetype = "longdash") +
+  geom_text(aes(3.8, 25), label = "Median = 2.80", color = "red", size = 4) +
+  scale_x_continuous("CACE (in per 1,000 units)",
+                     breaks = seq(from = -4, to = 10, by = 2)) + 
+  labs(title = "Histogram of CACE without exclusion restriction", 
+       subtitle = "with median and 90% credible interval") + 
+  theme_bw() + theme(panel.grid = element_blank()) 
+```
 
 
 
+We also replicates the Figure 2 of @imbens1997bayesian, which represents the posterior distribution for NACE: 
+
+
+```{r}
+# Plot the histogram of CACE with exclusion restriction
+NACE <- rstan::extract(stan_fit_noER, pars = "NACE")$NACE
+df_NACE <- data.frame(NACE); names(df_NACE) <- c("NACE")
+
+ggplot(data = df_NACE, aes(x = NACE)) + 
+  geom_histogram(color = "black", fill = "gray95") + 
+  geom_vline(xintercept = c(quantile(NACE, probs = c(0.05, 0.50, 0.95))), 
+             color = "red", linetype = "longdash") +
+  geom_text(aes(3.8, 25), label = "Median = 1.90", color = "red", size = 4) +
+  scale_x_continuous("NACE (in per 1,000 units)",
+                     breaks = seq(from = -30, to = 30, by = 2)) + 
+  labs(title = "Histogram of NACE without exclusion restriction", 
+       subtitle = "with median and 90% credible interval") + 
+  theme_bw() + theme(panel.grid = element_blank()) 
+```
+
+
+Under the exclusion restriction, the NACE is forced to be 0 because $\eta_{n0} = \eta_{n1}$. Without the exclusion restriction, however, the NACE has a posterior distribution, which turns out to be centered around 0, lending credibility to the exclusion restriction [@imbens1997bayesian]. 
+
+
+Next, we plot the joint posterior distribution of CACE and NACE without exclusion restriction, which replicates the Figure 4 of [@imbens1997bayesian]:
+
+
+```{r}
+# Plot joint posterior distribution of CACE and NACE
+ggplot(cbind.data.frame(df_CACE, df_NACE), aes(x = CACE, y = NACE)) +
+  geom_point(size = 2, shape = 3) + 
+  geom_vline(xintercept = 0, color = "blue") + 
+  geom_hline(yintercept = 0, color = "blue") + 
+  labs(title = "Joint posterior distribution of CACE and NACE") + 
+  theme_bw() + theme(panel.grid = element_blank()) 
+```
+
+
+From the plot, we must believe that NACE has a strong *positive* effects in order to believe that CACE has a *negative* effect. Since this combination of hypotheses does not seem plausible, one can be confident that receipt of treatment has a positive effect on outcome, even without making the exclusion restriction for never-takers [@imbens1997bayesian].  
 
 
 

@@ -1,61 +1,54 @@
 data {
-  int<lower=1> N;
-  
-  int<lower=0,upper=1> z[N];   // treatment assigned
-  int<lower=0,upper=1> w[N];   // treatment received  
-  int<lower=0,upper=1> y[N];   // outcomes  
+  int<lower=1> N;              // Sample size N 
+  int<lower=0,upper=1> Z[N];   // Treatment assigned Z
+  int<lower=0,upper=1> W[N];   // Treatment received W  
+  int<lower=0,upper=1> Y[N];   // Outcome Y  
 }
 
 parameters {
-
-  // PRINCIPAL STRATUM OUTCOME MEANS
+  // Population probability of being a complier
+  real<lower=0,upper=1> pi_c;
+  
+  // Probabilities for the binomial outcome distributions
   real<lower=0,upper=1> eta_c0;
   real<lower=0,upper=1> eta_c1;
+  real<lower=0,upper=1> eta_n;
+}  
 
-  real<lower=0,upper=1> eta_nt;
-
-
-  
-  // OVERALL PROBABILITY OF BEING A COMPLIER
-  real<lower=0,upper=1> pi;
-
-} 
-
+transformed parameters {
+  // Superpopulation complier average causal effect (CACE)
+  // in per-1000 units
+  real CACE; 
+  CACE = (eta_c1 - eta_c0)*10^3;
+}
 
 model {
+  // Prior for Complier probability
+  // implicit prior: pi_c ~ Unif(0, 1)
   
-  // PRIORS FOR OUTCOME (from Imbens & Rubin (1997))
+  // Priors for outcome model parameters
   eta_c0 ~ beta(2, 2);  
   eta_c1 ~ beta(2, 2);  
-  eta_nt ~ beta(2, 2);  
+  eta_n ~ beta(2, 2); 
 
-
-  // PRIORS FOR COMPLIER PROBABILITY
-  // implicit prior: pi ~ Unif(0,1)
-
-
-  
-  // MODELS FOR OUTCOME
+  // Likelihood
   for(n in 1:N){
     
-    // Never Takers
-    if(z[n] == 1 && w[n] == 0){
-      target +=  log(1 - pi) + bernoulli_lpmf(y[n] | eta_nt) ;
+    // Complier (assigned to treatment)
+    if(Z[n] == 1 && W[n] == 1){
+      target += log(pi_c) + bernoulli_lpmf(Y[n] | eta_c1) ;
     }
     
+    // Never-taker (assigned to treatment)
+    else if(Z[n] == 1 && W[n] == 0){
+      target +=  log(1 - pi_c) + bernoulli_lpmf(Y[n] | eta_n);
+    }
     
-    // Complier (control) or Never Taker
-    else if(z[n] == 0 && w[n] == 0){
+    // Complier or Never-taker (assigned to control)
+    else if(Z[n] == 0 && W[n] == 0){
       target += log_sum_exp(
-        log(1 - pi) + bernoulli_lpmf(y[n] | eta_nt),  // Never taker
-        log(pi) + bernoulli_lpmf(y[n] | eta_c0) );    // Complier (control)
+        log(1 - pi_c) + bernoulli_lpmf(Y[n] | eta_n),  // Never-taker
+        log(pi_c) + bernoulli_lpmf(Y[n] | eta_c0));    // Complier
     }
-    
-    
-    // Complier (treated)
-    else if(z[n] == 1 && w[n] == 1){
-      target += log(pi) + bernoulli_lpmf(y[n] | eta_c1) ; // Complier (treat)
-    }
-  
   }
 }
