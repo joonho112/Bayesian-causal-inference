@@ -1,0 +1,4 @@
+- source: case_study_02_IV_one-sided.qmd
+  quarto-pub:
+    - id: 9667e529-a378-44ef-854f-0a06a71ca853
+      url: 'https://quartopub.com/sites/joonholee/iv-one-sided-noncompliance'
